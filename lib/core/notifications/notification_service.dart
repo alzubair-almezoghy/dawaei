@@ -53,7 +53,9 @@ class NotificationService {
     timezone_data.initializeTimeZones();
     await _plugin.initialize(
       const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        android: AndroidInitializationSettings(
+          '@drawable/dawaei_notification',
+        ),
       ),
       onDidReceiveNotificationResponse:
           (response) => _dispatchPayload(response.payload, response.id),
@@ -189,6 +191,8 @@ class NotificationService {
             ? 'Medication alarms'
             : 'Medication reminders',
         channelDescription: 'Medication time reminders.',
+        icon: 'dawaei_notification',
+        largeIcon: const DrawableResourceAndroidBitmap('dawaei_logo_icon'),
         playSound: true,
         sound: _sound(alertSettings),
         audioAttributesUsage:
@@ -253,6 +257,8 @@ class NotificationService {
           ? 'Medication alarms'
           : 'Medication reminders',
       channelDescription: 'Medication time reminders.',
+      icon: 'dawaei_notification',
+      largeIcon: const DrawableResourceAndroidBitmap('dawaei_logo_icon'),
       playSound: true,
       sound: _sound(alertSettings),
       audioAttributesUsage:
