@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/database/database_providers.dart';
 import '../../../core/notifications/notification_scheduler.dart';
 import '../data/medication_repository.dart';
+import '../data/medication_image_storage.dart';
 import '../data/care_recipient_repository.dart';
 import '../models/medication.dart';
 
@@ -12,6 +13,10 @@ final medicationRepositoryProvider = Provider<MedicationRepository>(
 
 final careRecipientRepositoryProvider = Provider<CareRecipientRepository>(
   (ref) => CareRecipientRepository(ref.watch(appDatabaseProvider)),
+);
+
+final medicationImageStorageProvider = Provider<MedicationImageStorage>(
+  (ref) => MedicationImageStorage(ref.watch(appDatabaseProvider)),
 );
 
 final medicationsProvider =

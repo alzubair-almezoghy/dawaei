@@ -63,6 +63,32 @@ void main() {
   );
 
   test(
+    'persists, replaces, and removes the optional medication image path',
+    () async {
+      final id = await repository.save(
+        _sample().copyWith(imagePath: 'medication_images/first.jpg'),
+      );
+      expect(
+        (await repository.getById(id))!.imagePath,
+        'medication_images/first.jpg',
+      );
+
+      final medication = (await repository.getById(id))!;
+      await repository.save(
+        medication.copyWith(imagePath: 'medication_images/replacement.png'),
+      );
+      expect(
+        (await repository.getById(id))!.imagePath,
+        'medication_images/replacement.png',
+      );
+
+      final replaced = (await repository.getById(id))!;
+      await repository.save(replaced.copyWith(clearImagePath: true));
+      expect((await repository.getById(id))!.imagePath, isNull);
+    },
+  );
+
+  test(
     'schedule edits preserve old dose references and prevent duplicates',
     () async {
       final id = await repository.save(_sample());
@@ -222,6 +248,7 @@ void main() {
     final upgraded = AppDatabase(factory: databaseFactoryFfi, path: path);
     final db = await upgraded.database;
     expect((await db.query('medications')).single['name'], 'Legacy medicine');
+    expect((await db.query('medications')).single['image_path'], isNull);
     final columns = await db.rawQuery(
       'PRAGMA table_info(medication_schedule_sets)',
     );
@@ -230,7 +257,7 @@ void main() {
       isTrue,
     );
     expect(await db.query('notification_jobs'), isEmpty);
-    expect(await db.getVersion(), 3);
+    expect(await db.getVersion(), AppDatabase.schemaVersion);
     await upgraded.close();
   });
 }

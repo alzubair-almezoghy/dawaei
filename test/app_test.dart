@@ -23,6 +23,7 @@ Future<void> startApp(
   double textScale = 1,
   List<Medication> medications = const [],
   bool holdAtSplash = false,
+  bool disableAnimations = false,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -53,7 +54,10 @@ Future<void> startApp(
         ),
       ],
       child: MediaQuery(
-        data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
+        data: MediaQueryData(
+          textScaler: TextScaler.linear(textScale),
+          disableAnimations: disableAnimations,
+        ),
         child: const RepaintBoundary(
           key: Key('app-capture'),
           child: DawaeiApp(),
@@ -64,7 +68,7 @@ Future<void> startApp(
   if (holdAtSplash) {
     await tester.pump();
   } else {
-    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
   }
 }
@@ -132,19 +136,63 @@ void main() {
     tz.setLocalLocation(tz.getLocation('Africa/Tripoli'));
   });
 
-  testWidgets('branded splash remains for three seconds then opens the app', (
+  testWidgets('branded splash remains for five seconds then opens the app', (
     tester,
   ) async {
     await startApp(tester, MemorySettingsStore(), holdAtSplash: true);
     expect(find.byKey(const ValueKey('brand-splash')), findsOneWidget);
 
-    await tester.pump(const Duration(milliseconds: 2900));
+    await tester.pump(const Duration(milliseconds: 4900));
     expect(find.byKey(const ValueKey('brand-splash')), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
 
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pumpAndSettle();
     expect(find.byType(NavigationBar), findsOneWidget);
+  });
+
+  testWidgets('splash assembles the logo and honors reduced motion', (
+    tester,
+  ) async {
+    await startApp(tester, MemorySettingsStore(), holdAtSplash: true);
+    var capsule = tester.widget<Opacity>(
+      find.byKey(const ValueKey('splash-fragment-capsule')),
+    );
+    expect(capsule.opacity, 0);
+    await tester.pump(const Duration(milliseconds: 1200));
+    capsule = tester.widget<Opacity>(
+      find.byKey(const ValueKey('splash-fragment-capsule')),
+    );
+    expect(capsule.opacity, greaterThan(0));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await startApp(
+      tester,
+      MemorySettingsStore(),
+      holdAtSplash: true,
+      disableAnimations: true,
+    );
+    final scale = tester.widget<ScaleTransition>(
+      find.byKey(const ValueKey('splash-logo-scale')),
+    );
+    final fade = tester.widget<FadeTransition>(
+      find.byKey(const ValueKey('splash-final-logo')),
+    );
+    expect(scale.scale.value, 1);
+    expect(fade.opacity.value, 1);
+  });
+
+  testWidgets('splash assembly fits a compact phone display', (tester) async {
+    tester.view
+      ..physicalSize = const Size(320, 640)
+      ..devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await startApp(tester, MemorySettingsStore(), holdAtSplash: true);
+    await tester.pump(const Duration(milliseconds: 1200));
+    expect(find.byKey(const ValueKey('splash-final-logo')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('home shows the active medication reminder for today', (

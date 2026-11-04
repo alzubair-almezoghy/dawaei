@@ -181,7 +181,6 @@
   "medicationPaused": "تم إيقاف تذكيرات الدواء.",
   "medicationResumed": "تم استئناف تذكيرات الدواء.",
   "medicationArchived": "تمت إزالة الدواء مع الحفاظ على سجل جرعاته.",
-  "cancel": "إلغاء",
   "done": "تم",
   "retryDatabase": "أعد تحميل قائمة الأدوية",
   "medicationLoadError": "تعذّر فتح قائمة الأدوية. ما زالت بياناتك محفوظة على هذا الجهاز.",
@@ -263,5 +262,13 @@
   "alarmConfirmationNote": "إيقاف المنبه لا يعني تأكيد تناول الجرعة. أكّد تناولها من سجل الجرعات بعد أخذها.",
   "alarmActionError": "تعذر إيقاف المنبه. حاول مجددًا أو أغلق إشعاره.",
   "alarmPermission": "السماح بشاشة المنبه",
-  "alarmPermissionBody": "اسمح لشاشة المنبه بالظهور فوق شاشة القفل. يعتمد الصوت على مستوى صوت المنبه وأذونات الجهاز."
+  "alarmPermissionBody": "اسمح لشاشة المنبه بالظهور فوق شاشة القفل. يعتمد الصوت على مستوى صوت المنبه وأذونات الجهاز.",
+  "medicationPhotoTitle": "صورة الدواء (اختياري)",
+  "medicationPhotoDescription": "ستظهر الصورة عند رنين تذكير هذا الدواء.",
+  "chooseMedicationPhoto": "إضافة صورة",
+  "replaceMedicationPhoto": "استبدال الصورة",
+  "removeMedicationPhoto": "إزالة الصورة",
+  "takeMedicationPhoto": "التقاط صورة",
+  "choosePhotoFromGallery": "اختيار من المعرض",
+  "medicationPhotoError": "تعذر اختيار الصورة أو حفظها. لم يتم تغيير بيانات الدواء."
 }

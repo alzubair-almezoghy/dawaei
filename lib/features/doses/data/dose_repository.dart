@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../../core/database/app_database.dart';
+import '../../../core/notifications/notification_ids.dart';
 import '../models/dose_record.dart';
 
 class DoseRepository {
@@ -10,6 +11,7 @@ class DoseRepository {
 
   final AppDatabase _database;
   final int Function() _nowUtc;
+  static const unconfirmedGrace = Duration(hours: 2);
 
   static int _systemNowUtc() => DateTime.now().toUtc().millisecondsSinceEpoch;
 
@@ -109,8 +111,7 @@ class DoseRepository {
         final effectiveTo = row['effective_to_utc'] as int?;
         final isInitialSchedule = row['is_initial_schedule']! as int == 1;
         final isToday = date == todayDate;
-        if ((scheduledUtc < effectiveFrom &&
-                !(isToday && isInitialSchedule)) ||
+        if ((scheduledUtc < effectiveFrom && !(isToday && isInitialSchedule)) ||
             (effectiveTo != null && scheduledUtc >= effectiveTo)) {
           continue;
         }
@@ -126,26 +127,65 @@ class DoseRepository {
           'dosage_unit': row['dosage_unit'],
           'medication_form': row['medication_form'],
           'instructions': row['notes'],
+          'status_recorded_at_utc': _nowUtc(),
           'created_at_utc': _nowUtc(),
           'updated_at_utc': _nowUtc(),
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
-      }
-
-      if (date.isBefore(todayDate)) {
-        final endOfDay =
-            tz.TZDateTime(
-              tz.getLocation(_deviceZone()),
-              date.year,
-              date.month,
-              date.day + 1,
-            ).millisecondsSinceEpoch;
-        await txn.rawUpdate(
-          '''
-          UPDATE dose_records SET status = 'missed', updated_at_utc = ?
-          WHERE local_date = ? AND status = 'pending' AND scheduled_at_utc < ?
-        ''',
-          [_nowUtc(), localDate, endOfDay],
+        final inserted = await txn.query(
+          'dose_records',
+          columns: ['id'],
+          where: 'schedule_id = ? AND local_date = ?',
+          whereArgs: [row['schedule_id'], localDate],
+          limit: 1,
         );
+        if (inserted.isNotEmpty) {
+          final id = inserted.single['id']! as int;
+          final hasEvent = await txn.query(
+            'dose_status_events',
+            columns: ['id'],
+            where: 'dose_record_id = ?',
+            whereArgs: [id],
+            limit: 1,
+          );
+          if (hasEvent.isEmpty) {
+            await txn.insert('dose_status_events', {
+              'dose_record_id': id,
+              'new_status': 'pending',
+              'recorded_at_utc': _nowUtc(),
+              'event_type': 'scheduled',
+            });
+          }
+        }
+      }
+      final cutoff = _nowUtc() - unconfirmedGrace.inMilliseconds;
+      final overdue = await txn.query(
+        'dose_records',
+        columns: ['id', 'status'],
+        where:
+            "local_date = ? AND status IN ('pending', 'postponed') AND COALESCE(postponed_until_utc, scheduled_at_utc) <= ?",
+        whereArgs: [localDate, cutoff],
+      );
+      for (final dose in overdue) {
+        final id = dose['id']! as int;
+        final oldStatus = dose['status']! as String;
+        await txn.update(
+          'dose_records',
+          {
+            'status': 'unconfirmed',
+            'postponed_until_utc': null,
+            'status_recorded_at_utc': _nowUtc(),
+            'updated_at_utc': _nowUtc(),
+          },
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        await txn.insert('dose_status_events', {
+          'dose_record_id': id,
+          'previous_status': oldStatus,
+          'new_status': 'unconfirmed',
+          'recorded_at_utc': _nowUtc(),
+          'event_type': 'grace_period_expired',
+        });
       }
     });
 
@@ -158,33 +198,179 @@ class DoseRepository {
     return rows.map(DoseRecord.fromRow).toList(growable: false);
   }
 
+  Future<DoseRecord?> findDoseForAlarm({
+    required int medicationId,
+    int? notificationId,
+  }) async {
+    final db = await _database.database;
+    if (notificationId != null &&
+        notificationId >= postponedNotificationIdBase) {
+      final doseId = notificationId - postponedNotificationIdBase;
+      final rows = await db.query(
+        'dose_records',
+        where: 'id = ? AND medication_id = ?',
+        whereArgs: [doseId, medicationId],
+        limit: 1,
+      );
+      return rows.isEmpty ? null : DoseRecord.fromRow(rows.single);
+    }
+
+    if (notificationId != null) {
+      var rows = await db.rawQuery(
+        '''
+        SELECT d.* FROM dose_records d
+        JOIN notification_jobs n
+          ON n.schedule_id = d.schedule_id AND n.local_date = d.local_date
+        WHERE n.id = ? AND d.medication_id = ? LIMIT 1
+      ''',
+        [notificationId, medicationId],
+      );
+      if (rows.isEmpty) {
+        await getForDate(DateTime.now());
+        rows = await db.rawQuery(
+          '''
+          SELECT d.* FROM dose_records d
+          JOIN notification_jobs n
+            ON n.schedule_id = d.schedule_id AND n.local_date = d.local_date
+          WHERE n.id = ? AND d.medication_id = ? LIMIT 1
+        ''',
+          [notificationId, medicationId],
+        );
+      }
+      if (rows.isNotEmpty) return DoseRecord.fromRow(rows.single);
+    }
+
+    final doses = await getForDate(DateTime.now());
+    final now = _nowUtc();
+    final matches =
+        doses
+            .where(
+              (dose) =>
+                  dose.medicationId == medicationId &&
+                  dose.scheduledAtUtc <=
+                      now + const Duration(minutes: 5).inMilliseconds &&
+                  dose.status != DoseStatus.taken &&
+                  dose.status != DoseStatus.skipped,
+            )
+            .toList()
+          ..sort(
+            (a, b) => (a.scheduledAtUtc - now).abs().compareTo(
+              (b.scheduledAtUtc - now).abs(),
+            ),
+          );
+    return matches.isEmpty ? null : matches.first;
+  }
+
   Future<void> setStatus(int id, DoseStatus status) async {
-    if (status == DoseStatus.missed) {
-      throw ArgumentError.value(status, 'status', 'Missed is system-derived.');
+    if (status == DoseStatus.missed ||
+        status == DoseStatus.unconfirmed ||
+        status == DoseStatus.postponed) {
+      throw ArgumentError.value(
+        status,
+        'status',
+        'Use system transition or postponeDose.',
+      );
     }
     final db = await _database.database;
-    final rows = await db.query(
-      'dose_records',
-      columns: ['scheduled_at_utc', 'status'],
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
-    if (rows.isEmpty) throw StateError('Dose record not found.');
-    if ((rows.single['scheduled_at_utc']! as int) > _nowUtc()) {
-      throw StateError('A future dose cannot be confirmed.');
-    }
     final now = _nowUtc();
-    await db.update(
-      'dose_records',
-      {
-        'status': status.databaseValue,
-        'taken_at_utc': status == DoseStatus.taken ? now : null,
-        'confirmed_at_utc': now,
-        'updated_at_utc': now,
-      },
-      where: 'id = ?',
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'dose_records',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        throw StateError('Dose record not found.');
+      }
+      final row = rows.single;
+      if ((row['scheduled_at_utc']! as int) > now) {
+        throw StateError('A future dose cannot be confirmed.');
+      }
+      final previous = row['status']! as String;
+      if (previous == status.databaseValue) return;
+      await txn.update(
+        'dose_records',
+        {
+          'status': status.databaseValue,
+          'taken_at_utc': status == DoseStatus.taken ? now : null,
+          'confirmed_at_utc': now,
+          'status_recorded_at_utc': now,
+          'postponed_until_utc': null,
+          'updated_at_utc': now,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      await txn.insert('dose_status_events', {
+        'dose_record_id': id,
+        'previous_status': previous,
+        'new_status': status.databaseValue,
+        'recorded_at_utc': now,
+        'event_type':
+            previous == 'taken' || previous == 'skipped'
+                ? 'correction'
+                : 'user_confirmation',
+      });
+    });
+  }
+
+  Future<void> postponeDose(int id, DateTime untilUtc) async {
+    final db = await _database.database;
+    final now = _nowUtc();
+    final until = untilUtc.toUtc().millisecondsSinceEpoch;
+    if (until <= now) {
+      throw ArgumentError('Postponed time must be in the future.');
+    }
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'dose_records',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        throw StateError('Dose record not found.');
+      }
+      final row = rows.single;
+      if ((row['scheduled_at_utc']! as int) > now) {
+        throw StateError('A future dose cannot be postponed.');
+      }
+      final previous = row['status']! as String;
+      if (previous == 'taken' || previous == 'skipped') {
+        throw StateError('This dose is already closed.');
+      }
+      await txn.update(
+        'dose_records',
+        {
+          'status': 'postponed',
+          'taken_at_utc': null,
+          'confirmed_at_utc': now,
+          'status_recorded_at_utc': now,
+          'postponed_until_utc': until,
+          'updated_at_utc': now,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      await txn.insert('dose_status_events', {
+        'dose_record_id': id,
+        'previous_status': previous,
+        'new_status': 'postponed',
+        'recorded_at_utc': now,
+        'event_type': 'postponed',
+        'postponed_until_utc': until,
+      });
+    });
+  }
+
+  Future<List<Map<String, Object?>>> eventsForDose(int id) async {
+    final db = await _database.database;
+    return db.query(
+      'dose_status_events',
+      where: 'dose_record_id = ?',
       whereArgs: [id],
+      orderBy: 'recorded_at_utc ASC, id ASC',
     );
   }
 
@@ -214,10 +400,10 @@ class DoseRepository {
       skipped: counts['skipped'] ?? 0,
       missed: counts['missed'] ?? 0,
       pending: counts['pending'] ?? 0,
+      postponed: counts['postponed'] ?? 0,
+      unconfirmed: (counts['unconfirmed'] ?? 0) + (counts['missed'] ?? 0),
     );
   }
-
-  String _deviceZone() => tz.local.name;
 
   String _encodeDate(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'

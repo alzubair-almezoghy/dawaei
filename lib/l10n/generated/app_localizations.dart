@@ -1636,6 +1636,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Allow the alarm screen over the lock screen. Sound depends on alarm volume and device permissions.'**
   String get alarmPermissionBody;
+
+  /// No description provided for @medicationPhotoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Medication photo (optional)'**
+  String get medicationPhotoTitle;
+
+  /// No description provided for @medicationPhotoDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The photo will appear when this medication reminder rings.'**
+  String get medicationPhotoDescription;
+
+  /// No description provided for @chooseMedicationPhoto.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a photo'**
+  String get chooseMedicationPhoto;
+
+  /// No description provided for @replaceMedicationPhoto.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace photo'**
+  String get replaceMedicationPhoto;
+
+  /// No description provided for @removeMedicationPhoto.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove photo'**
+  String get removeMedicationPhoto;
+
+  /// No description provided for @takeMedicationPhoto.
+  ///
+  /// In en, this message translates to:
+  /// **'Take a photo'**
+  String get takeMedicationPhoto;
+
+  /// No description provided for @choosePhotoFromGallery.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose from gallery'**
+  String get choosePhotoFromGallery;
+
+  /// No description provided for @medicationPhotoError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not select or save the photo. Your medication details were not changed.'**
+  String get medicationPhotoError;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

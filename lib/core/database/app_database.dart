@@ -6,12 +6,14 @@ import 'migrations/v2_schedule_history.dart';
 import 'migrations/v3_notification_jobs.dart';
 import 'migrations/v4_care_recipients.dart';
 import 'migrations/v5_medication_indication.dart';
+import 'migrations/v6_dose_tracking.dart';
+import 'migrations/v7_medication_image.dart';
 
 class AppDatabase {
   AppDatabase({DatabaseFactory? factory, this.path})
     : _factory = factory ?? databaseFactory;
 
-  static const schemaVersion = 5;
+  static const schemaVersion = 7;
   static const defaultPath = 'dawaei.db';
 
   final DatabaseFactory _factory;
@@ -52,6 +54,8 @@ class AppDatabase {
           await upgradeToV3(db);
           await upgradeToV4(db);
           await upgradeToV5(db);
+          await upgradeToV6(db);
+          await upgradeToV7(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 1 && newVersion >= 1) await createSchemaV1(db);
@@ -59,6 +63,8 @@ class AppDatabase {
           if (oldVersion < 3 && newVersion >= 3) await upgradeToV3(db);
           if (oldVersion < 4 && newVersion >= 4) await upgradeToV4(db);
           if (oldVersion < 5 && newVersion >= 5) await upgradeToV5(db);
+          if (oldVersion < 6 && newVersion >= 6) await upgradeToV6(db);
+          if (oldVersion < 7 && newVersion >= 7) await upgradeToV7(db);
         },
       ),
     );

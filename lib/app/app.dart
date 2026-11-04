@@ -11,6 +11,7 @@ import '../core/notifications/notification_service.dart';
 import '../features/onboarding/screens/onboarding_screen.dart';
 import '../features/settings/providers/settings_provider.dart';
 import '../l10n/generated/app_localizations.dart';
+import 'widgets/dawaei_splash_animation.dart';
 import 'router.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
@@ -58,6 +59,7 @@ class DawaeiApp extends ConsumerStatefulWidget {
 class _DawaeiAppState extends ConsumerState<DawaeiApp> {
   Timer? _splashTimer;
   ValueNotifier<bool>? _pendingAlarmNotifier;
+  Duration _splashRemaining = const Duration(seconds: 5);
   bool _splashElapsed = false;
   bool _skipSplash = false;
 
@@ -65,7 +67,7 @@ class _DawaeiAppState extends ConsumerState<DawaeiApp> {
   void initState() {
     super.initState();
     unawaited(_enableEdgeToEdge());
-    _scheduleSplashEnd(const Duration(seconds: 3));
+    _scheduleSplashEnd(const Duration(seconds: 5));
     unawaited(_syncNativeSplashDuration());
 
     final notifications = ref.read(notificationServiceProvider);
@@ -101,11 +103,13 @@ class _DawaeiAppState extends ConsumerState<DawaeiApp> {
       );
       if (!mounted || _skipSplash || _splashElapsed) return;
       if (remainingMilliseconds != null) {
-        _scheduleSplashEnd(Duration(milliseconds: remainingMilliseconds));
-        if (_splashElapsed) setState(() {});
+        final remaining = Duration(milliseconds: remainingMilliseconds);
+        _splashRemaining = remaining;
+        _scheduleSplashEnd(remaining);
+        if (mounted) setState(() {});
       }
     } on PlatformException {
-      // Use the three-second Flutter fallback if native timing is unavailable.
+      // Use the five-second Flutter fallback if native timing is unavailable.
     } on MissingPluginException {
       // Widget tests and non-Android targets use the same fallback timer.
     }
@@ -209,7 +213,12 @@ class _DawaeiAppState extends ConsumerState<DawaeiApp> {
             ? ref.watch(alarmStartupProvider)
             : ref.watch(appStartupProvider);
     if (!_splashElapsed && !_skipSplash) {
-      return _switcher(const _BrandedSplash(key: ValueKey('brand-splash')));
+      return _switcher(
+        _BrandedSplash(
+          duration: _splashRemaining,
+          key: const ValueKey('brand-splash'),
+        ),
+      );
     }
     return startup.when(
       data: (_) => _switcher(_readyApp()),
@@ -227,7 +236,9 @@ class _DawaeiAppState extends ConsumerState<DawaeiApp> {
 }
 
 class _BrandedSplash extends StatelessWidget {
-  const _BrandedSplash({super.key});
+  const _BrandedSplash({required this.duration, super.key});
+
+  final Duration duration;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -241,16 +252,9 @@ class _BrandedSplash extends StatelessWidget {
         systemNavigationBarColor: AppColors.darkBackground,
         systemNavigationBarIconBrightness: Brightness.light,
       ),
-      child: const Scaffold(
-        backgroundColor: AppColors.darkBackground,
-        body: Center(
-          child: Image(
-            image: AssetImage('assets/brand/dawaei_logo.png'),
-            width: 176,
-            height: 176,
-            fit: BoxFit.contain,
-          ),
-        ),
+      child: Scaffold(
+        backgroundColor: const Color(0xFF071F2D),
+        body: DawaeiSplashAnimation(duration: duration),
       ),
     ),
   );

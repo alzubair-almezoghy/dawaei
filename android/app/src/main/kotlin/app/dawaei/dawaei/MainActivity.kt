@@ -51,7 +51,7 @@ class MainActivity : FlutterActivity() {
                     "getSplashRemainingMillis" -> {
                         val elapsed =
                             SystemClock.elapsedRealtime() - activityLaunchElapsedRealtime
-                        result.success((3_000L - elapsed).coerceAtLeast(0L).toInt())
+                        result.success((5_000L - elapsed).coerceAtLeast(0L).toInt())
                     }
                     else -> result.notImplemented()
                 }

@@ -780,4 +780,28 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get alarmPermissionBody => 'Allow the alarm screen over the lock screen. Sound depends on alarm volume and device permissions.';
+
+  @override
+  String get medicationPhotoTitle => 'Medication photo (optional)';
+
+  @override
+  String get medicationPhotoDescription => 'The photo will appear when this medication reminder rings.';
+
+  @override
+  String get chooseMedicationPhoto => 'Add a photo';
+
+  @override
+  String get replaceMedicationPhoto => 'Replace photo';
+
+  @override
+  String get removeMedicationPhoto => 'Remove photo';
+
+  @override
+  String get takeMedicationPhoto => 'Take a photo';
+
+  @override
+  String get choosePhotoFromGallery => 'Choose from gallery';
+
+  @override
+  String get medicationPhotoError => 'Could not select or save the photo. Your medication details were not changed.';
 }

@@ -5,8 +5,13 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../core/notifications/notification_scheduler.dart';
+import '../../../core/notifications/notification_ids.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../../../shared/widgets/page_content.dart';
+import '../../../shared/widgets/postpone_duration_sheet.dart';
+import '../../doses/models/dose_record.dart';
+import '../../doses/providers/doses_provider.dart';
+import '../widgets/medication_image_preview.dart';
 import '../providers/medications_provider.dart';
 import '../../settings/models/app_settings.dart';
 import '../../settings/providers/settings_provider.dart';
@@ -34,11 +39,37 @@ class _MedicationAlarmScreenState extends ConsumerState<MedicationAlarmScreen> {
   bool _busy = false;
   bool _dismissed = false;
   bool _allowPop = false;
+  bool _doseLoading = true;
+  DoseRecord? _dose;
+  int? _activeNotificationId;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startAlarmAudio());
+    _activeNotificationId = widget.notificationId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startAlarmAudio();
+      _loadDose();
+    });
+  }
+
+  Future<void> _loadDose() async {
+    try {
+      final dose = await ref
+          .read(doseRepositoryProvider)
+          .findDoseForAlarm(
+            medicationId: widget.medicationId,
+            notificationId: widget.notificationId,
+          );
+      if (mounted) {
+        setState(() {
+          _dose = dose;
+          _doseLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _doseLoading = false);
+    }
   }
 
   Future<void> _startAlarmAudio() async {
@@ -65,11 +96,11 @@ class _MedicationAlarmScreenState extends ConsumerState<MedicationAlarmScreen> {
     } on MissingPluginException {
       // This route can also be shown in preview/test environments.
     }
-    if (widget.notificationId != null) {
+    if (_activeNotificationId != null) {
       try {
         await ref
             .read(notificationServiceProvider)
-            .cancel(widget.notificationId!);
+            .cancel(_activeNotificationId!);
       } catch (_) {
         // Closing the alarm screen must not depend on notification cleanup.
       }
@@ -82,26 +113,185 @@ class _MedicationAlarmScreenState extends ConsumerState<MedicationAlarmScreen> {
     setState(() => _busy = true);
     try {
       await _stopAlarmAndNotification();
-      if (!mounted) return;
-      if (widget.closeActivityOnDismiss) {
-        // This Activity was opened by Android for the alarm. Finish it so the
-        // previous app or the lock screen is restored instead of showing Home.
-        try {
-          await _alarmAudio.invokeMethod<void>('finishAlarmActivity', {
-            'notificationId': widget.notificationId,
-          });
-          return;
-        } on PlatformException {
-          // Fall through to a navigator pop for nonstandard Android builds.
-        } on MissingPluginException {
-          // Fall through only in environments without the native activity.
-        }
-      }
+      await _closeAlarmRoute();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
-      setState(() => _allowPop = true);
-      await WidgetsBinding.instance.endOfFrame;
-      if (mounted && context.canPop()) {
-        context.pop();
+  Future<void> _closeAlarmRoute({bool cancelNotification = true}) async {
+    if (!mounted) return;
+    if (widget.closeActivityOnDismiss) {
+      try {
+        await _alarmAudio.invokeMethod<void>('finishAlarmActivity', {
+          'notificationId': cancelNotification ? _activeNotificationId : null,
+        });
+        return;
+      } on PlatformException {
+        // Fall through to route pop if the native activity cannot finish.
+      } on MissingPluginException {
+        // Fall through in non-Android preview environments.
+      }
+    }
+    setState(() => _allowPop = true);
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted && context.canPop()) context.pop();
+  }
+
+  Future<void> _restoreAlarmAfterCanceledPostpone(DoseRecord dose) async {
+    _dismissed = false;
+    final notificationId =
+        _activeNotificationId ?? postponedNotificationIdBase + dose.id;
+    _activeNotificationId = notificationId;
+    try {
+      final medication =
+          ref
+              .read(medicationsProvider)
+              .asData
+              ?.value
+              .where((item) => item.id == widget.medicationId)
+              .firstOrNull;
+      final settings = await ref.read(settingsProvider.future);
+      if (medication != null) {
+        await ref
+            .read(notificationServiceProvider)
+            .restoreAlarmNotification(
+              id: notificationId,
+              medicationId: widget.medicationId,
+              medicationName: medication.name,
+              dosageAmount: medication.dosageAmount,
+              dosageUnit: medication.dosageUnit,
+              alertSettings: settings,
+            );
+      }
+    } catch (_) {
+      // Keep the current alarm screen and restart native playback below.
+    }
+    await _startAlarmAudio();
+  }
+
+  Future<int?> _choosePostponeMinutes() {
+    final isArabic = AppLocalizations.of(context).localeName.startsWith('ar');
+    return showPostponeDurationSheet(
+      context: context,
+      title:
+          isArabic
+              ? '\u062a\u0623\u062c\u064a\u0644 \u062a\u0630\u0643\u064a\u0631 \u0627\u0644\u062c\u0631\u0639\u0629'
+              : 'Snooze dose reminder',
+      minuteOptions: const [5, 10, 15, 30],
+      minuteLabelBuilder:
+          (minutes) =>
+              isArabic
+                  ? '\u0628\u0639\u062f $minutes \u062f\u0642\u064a\u0642\u0629'
+                  : 'In $minutes minutes',
+      customLabel:
+          isArabic
+              ? '\u0648\u0642\u062a \u0645\u062e\u0635\u0635'
+              : 'Custom time',
+      showDragHandle: true,
+    );
+  }
+
+  Future<DateTime?> _postponeTime() async {
+    final choice = await _choosePostponeMinutes();
+    if (choice == null) return null;
+    if (!mounted) return null;
+    final now = DateTime.now();
+    if (choice > 0) return now.toUtc().add(Duration(minutes: choice));
+    final selected = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(now.add(const Duration(minutes: 30))),
+    );
+    if (selected == null) return null;
+    var local = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      selected.hour,
+      selected.minute,
+    );
+    if (!local.isAfter(now)) local = local.add(const Duration(days: 1));
+    return local.toUtc();
+  }
+
+  Future<void> _postponeAlarm() async {
+    final dose = _dose;
+    if (_busy || dose == null) return;
+    setState(() => _busy = true);
+    _dismissed = true;
+    await _stopAlarmAndNotification();
+    try {
+      final until = await _postponeTime();
+      if (!mounted) return;
+      if (until == null) {
+        await _restoreAlarmAfterCanceledPostpone(dose);
+        return;
+      }
+      // Schedule first. If Android rejects the request, the dose record stays
+      // unchanged and the alarm interface can be restored.
+      await ref
+          .read(notificationSchedulerProvider)
+          .schedulePostponedDose(dose.id, untilUtc: until);
+      try {
+        await ref.read(doseRepositoryProvider).postponeDose(dose.id, until);
+      } catch (_) {
+        await ref
+            .read(notificationServiceProvider)
+            .cancel(postponedNotificationIdBase + dose.id);
+        rethrow;
+      }
+      final now = DateTime.now();
+      ref.invalidate(
+        dosesForDateProvider(DateTime(now.year, now.month, now.day)),
+      );
+      await _closeAlarmRoute(cancelNotification: false);
+    } catch (_) {
+      if (mounted) {
+        await _restoreAlarmAfterCanceledPostpone(dose);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context).localeName.startsWith('ar')
+                  ? 'تعذر جدولة التذكير. لم يتم تأجيل الجرعة.'
+                  : 'Could not schedule the reminder. The dose was not postponed.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _markDoseTaken() async {
+    final dose = _dose;
+    if (_busy || dose == null) return;
+    setState(() => _busy = true);
+    _dismissed = true;
+    try {
+      await ref
+          .read(doseRepositoryProvider)
+          .setStatus(dose.id, DoseStatus.taken);
+      final now = DateTime.now();
+      ref.invalidate(
+        dosesForDateProvider(DateTime(now.year, now.month, now.day)),
+      );
+      await ref
+          .read(notificationServiceProvider)
+          .cancel(postponedNotificationIdBase + dose.id);
+      await _stopAlarmAndNotification();
+      await _closeAlarmRoute();
+    } catch (_) {
+      if (mounted) {
+        _dismissed = false;
+        await _startAlarmAudio();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context).medicationLoadError),
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -182,11 +372,23 @@ class _MedicationAlarmScreenState extends ConsumerState<MedicationAlarmScreen> {
                   padding: const EdgeInsets.all(24),
                   child: Column(
                     children: [
-                      Icon(
-                        Icons.medication_rounded,
-                        size: 30,
-                        color: theme.colorScheme.primary,
-                      ),
+                      if (medication.imagePath != null)
+                        MedicationImagePreview(
+                          path: medication.imagePath,
+                          temporary: false,
+                          height: 158,
+                          placeholder: Icon(
+                            Icons.medication_rounded,
+                            size: 42,
+                            color: theme.colorScheme.primary,
+                          ),
+                        )
+                      else
+                        Icon(
+                          Icons.medication_rounded,
+                          size: 30,
+                          color: theme.colorScheme.primary,
+                        ),
                       const SizedBox(height: 12),
                       Text(
                         medication.name,
@@ -220,9 +422,38 @@ class _MedicationAlarmScreenState extends ConsumerState<MedicationAlarmScreen> {
               ),
             ),
             const SizedBox(height: 24),
+            if (_doseLoading)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_dose != null &&
+                _dose!.status != DoseStatus.taken &&
+                _dose!.status != DoseStatus.skipped) ...[
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _busy ? null : _markDoseTaken,
+                  icon: const Icon(Icons.check_circle_outline_rounded),
+                  label: Text(l10n.markTaken),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonalIcon(
+                  onPressed: _busy ? null : _postponeAlarm,
+                  icon: const Icon(Icons.snooze_rounded),
+                  label: Text(
+                    l10n.localeName.startsWith('ar') ? 'تأجيل' : 'Postpone',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             SizedBox(
               width: double.infinity,
-              child: FilledButton.icon(
+              child: OutlinedButton.icon(
                 onPressed: _busy ? null : _dismissAlarm,
                 icon: const Icon(Icons.volume_off_outlined),
                 label: Text(l10n.stopAlarm),

@@ -4,8 +4,10 @@ import 'package:timezone/timezone.dart' as tz;
 enum DoseStatus {
   pending('pending'),
   taken('taken'),
+  postponed('postponed'),
   skipped('skipped'),
-  missed('missed');
+  unconfirmed('unconfirmed'),
+  missed('missed'); // Kept for compatibility with older callers.
 
   const DoseStatus(this.databaseValue);
   final String databaseValue;
@@ -13,7 +15,9 @@ enum DoseStatus {
   static DoseStatus fromDatabase(String value) => switch (value) {
     'pending' => DoseStatus.pending,
     'taken' => DoseStatus.taken,
+    'postponed' => DoseStatus.postponed,
     'skipped' => DoseStatus.skipped,
+    'unconfirmed' => DoseStatus.unconfirmed,
     'missed' => DoseStatus.missed,
     _ => throw FormatException('Unknown dose status.'),
   };
@@ -35,6 +39,8 @@ class DoseRecord {
     this.instructions,
     this.takenAtUtc,
     this.confirmedAtUtc,
+    this.statusRecordedAtUtc,
+    this.postponedUntilUtc,
   });
 
   final int id;
@@ -50,6 +56,8 @@ class DoseRecord {
   final DoseStatus status;
   final int? takenAtUtc;
   final int? confirmedAtUtc;
+  final int? statusRecordedAtUtc;
+  final int? postponedUntilUtc;
 
   tz.TZDateTime get scheduledAt => tz.TZDateTime.from(
     DateTime.fromMillisecondsSinceEpoch(scheduledAtUtc, isUtc: true),
@@ -70,6 +78,8 @@ class DoseRecord {
     status: DoseStatus.fromDatabase(row['status']! as String),
     takenAtUtc: row['taken_at_utc'] as int?,
     confirmedAtUtc: row['confirmed_at_utc'] as int?,
+    statusRecordedAtUtc: row['status_recorded_at_utc'] as int?,
+    postponedUntilUtc: row['postponed_until_utc'] as int?,
   );
 }
 
@@ -81,6 +91,8 @@ class AdherenceSummary {
     required this.skipped,
     required this.missed,
     required this.pending,
+    this.postponed = 0,
+    this.unconfirmed = 0,
   });
 
   final int total;
@@ -88,6 +100,8 @@ class AdherenceSummary {
   final int skipped;
   final int missed;
   final int pending;
+  final int postponed;
+  final int unconfirmed;
 
   double? get rate => total == 0 ? null : taken / total;
 }

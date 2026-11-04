@@ -196,6 +196,7 @@ class _FakeNotificationService extends NotificationService {
     required String dosageAmount,
     required String dosageUnit,
     required int medicationId,
+    int? doseRecordId,
     required tz.TZDateTime at,
     required bool exact,
     required AppSettings alertSettings,

@@ -10,10 +10,12 @@ import '../../../features/medicines/providers/medications_provider.dart';
 import '../../../features/doses/models/dose_record.dart';
 import '../../../features/doses/providers/doses_provider.dart';
 import '../../../core/notifications/notification_scheduler.dart';
+import '../../../core/notifications/notification_ids.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../../../shared/widgets/empty_state.dart';
 import '../../../shared/widgets/dose_summary.dart';
 import '../../../shared/widgets/page_content.dart';
+import '../../../shared/widgets/postpone_duration_sheet.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -52,7 +54,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   void _startMinuteTimer() {
     _minuteTimer?.cancel();
     _minuteTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        final now = DateTime.now();
+        ref.invalidate(
+          dosesForDateProvider(DateTime(now.year, now.month, now.day)),
+        );
+      }
     });
   }
 
@@ -89,6 +97,50 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Future<void> _updateDose(DoseRecord dose, DoseStatus status) async {
     try {
       await ref.read(doseRepositoryProvider).setStatus(dose.id, status);
+      await ref
+          .read(notificationServiceProvider)
+          .cancel(postponedNotificationIdBase + dose.id);
+      final now = DateTime.now();
+      ref.invalidate(
+        dosesForDateProvider(DateTime(now.year, now.month, now.day)),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context).medicationLoadError),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _postponeDose(DoseRecord dose) async {
+    final isArabic = AppLocalizations.of(context).localeName.startsWith('ar');
+    final minutes = await showPostponeDurationSheet(
+      context: context,
+      title:
+          isArabic
+              ? '\u062a\u0623\u062c\u064a\u0644 \u062a\u0630\u0643\u064a\u0631 \u0627\u0644\u062c\u0631\u0639\u0629'
+              : 'Snooze dose reminder',
+      minuteOptions: const [10, 30, 60],
+      minuteLabelBuilder:
+          (minutes) =>
+              isArabic
+                  ? '\u0628\u0639\u062f $minutes \u062f\u0642\u064a\u0642\u0629'
+                  : 'In $minutes minutes',
+    );
+    if (minutes == null) return;
+    try {
+      await ref
+          .read(doseRepositoryProvider)
+          .postponeDose(
+            dose.id,
+            DateTime.now().toUtc().add(Duration(minutes: minutes)),
+          );
+      await ref
+          .read(notificationSchedulerProvider)
+          .schedulePostponedDose(dose.id);
       final now = DateTime.now();
       ref.invalidate(
         dosesForDateProvider(DateTime(now.year, now.month, now.day)),
@@ -312,6 +364,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                               (item) => _ReminderCard(
                                 item: item,
                                 onStatus: _updateDose,
+                                onPostpone: _postponeDose,
                               ),
                             )
                             .toList(growable: false),
@@ -366,9 +419,14 @@ class _Metric extends StatelessWidget {
 }
 
 class _ReminderCard extends StatelessWidget {
-  const _ReminderCard({required this.item, required this.onStatus});
+  const _ReminderCard({
+    required this.item,
+    required this.onStatus,
+    required this.onPostpone,
+  });
   final _TodayReminder item;
   final Future<void> Function(DoseRecord, DoseStatus) onStatus;
+  final Future<void> Function(DoseRecord) onPostpone;
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -419,6 +477,15 @@ class _ReminderCard extends StatelessWidget {
                     icon: const Icon(Icons.remove_circle_outline_rounded),
                     label: Text(AppLocalizations.of(context).markSkipped),
                   ),
+                  OutlinedButton.icon(
+                    onPressed: () => onPostpone(item.dose),
+                    icon: const Icon(Icons.snooze_rounded),
+                    label: Text(
+                      AppLocalizations.of(context).localeName.startsWith('ar')
+                          ? 'تأجيل'
+                          : 'Postpone',
+                    ),
+                  ),
                 ],
               ),
           ],
@@ -432,8 +499,11 @@ String _doseStatusLabel(BuildContext context, DoseStatus status) {
   final l10n = AppLocalizations.of(context);
   return switch (status) {
     DoseStatus.taken => l10n.taken,
+    DoseStatus.postponed =>
+      l10n.localeName.startsWith('ar') ? 'مؤجلة' : 'Postponed',
     DoseStatus.skipped => l10n.skipped,
-    DoseStatus.missed => l10n.missed,
+    DoseStatus.unconfirmed || DoseStatus.missed =>
+      l10n.localeName.startsWith('ar') ? 'غير مؤكدة' : 'Unconfirmed',
     DoseStatus.pending => l10n.pending,
   };
 }

@@ -6,6 +6,8 @@ import 'package:intl/intl.dart';
 
 import '../../../features/doses/models/dose_record.dart';
 import '../../../features/doses/providers/doses_provider.dart';
+import '../../../core/notifications/notification_scheduler.dart';
+import '../../../core/notifications/notification_ids.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../../../shared/widgets/empty_state.dart';
 import '../../../shared/widgets/dose_summary.dart';
@@ -180,6 +182,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final l10n = AppLocalizations.of(context);
     try {
       await ref.read(doseRepositoryProvider).setStatus(dose.id, status);
+      await ref
+          .read(notificationServiceProvider)
+          .cancel(postponedNotificationIdBase + dose.id);
       ref.invalidate(dosesForDateProvider(_selectedDate));
       ref.invalidate(adherenceSummaryProvider(_range));
       if (mounted) {
@@ -245,7 +250,7 @@ class _AdherenceCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${l10n.skipped}: ${value.skipped} · ${l10n.missed}: ${value.missed}',
+                        '${l10n.skipped}: ${value.skipped} · ${l10n.localeName.startsWith('ar') ? 'مؤجلة' : 'Postponed'}: ${value.postponed} · ${l10n.localeName.startsWith('ar') ? 'غير مؤكدة' : 'Unconfirmed'}: ${value.unconfirmed}',
                       ),
                     ],
                   ),
@@ -259,17 +264,21 @@ class _AdherenceCard extends StatelessWidget {
   }
 }
 
-class _DoseCard extends StatelessWidget {
+class _DoseCard extends ConsumerWidget {
   const _DoseCard({required this.dose, required this.onStatus});
   final DoseRecord dose;
   final Future<void> Function(DoseRecord, DoseStatus) onStatus;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final l10n = AppLocalizations.of(context);
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
     final due = dose.scheduledAtUtc <= now;
-    final late = dose.status == DoseStatus.pending && due;
+    final late =
+        (dose.status == DoseStatus.pending ||
+            dose.status == DoseStatus.postponed) &&
+        due;
+    final isArabic = l10n.localeName.startsWith('ar');
     final (label, icon, color) = switch (dose.status) {
       DoseStatus.taken => (
         l10n.taken,
@@ -281,8 +290,18 @@ class _DoseCard extends StatelessWidget {
         Icons.do_not_disturb_on_rounded,
         AppColors.warning(Theme.of(context).brightness),
       ),
+      DoseStatus.postponed => (
+        isArabic ? 'مؤجلة' : 'Postponed',
+        Icons.snooze_rounded,
+        AppColors.warning(Theme.of(context).brightness),
+      ),
+      DoseStatus.unconfirmed => (
+        isArabic ? 'غير مؤكدة' : 'Unconfirmed',
+        Icons.help_outline_rounded,
+        Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
       DoseStatus.missed => (
-        l10n.missed,
+        isArabic ? 'غير مؤكدة' : 'Unconfirmed',
         Icons.help_outline_rounded,
         Theme.of(context).colorScheme.error,
       ),
@@ -305,6 +324,94 @@ class _DoseCard extends StatelessWidget {
               time: DateFormat.jm(l10n.localeName).format(dose.scheduledAt),
               icon: icon,
               color: color,
+            ),
+            const SizedBox(height: 8),
+            _DoseMetadata(
+              label: isArabic ? 'وقت الجدولة' : 'Scheduled',
+              value: DateFormat.jm(l10n.localeName).format(dose.scheduledAt),
+            ),
+            if (dose.statusRecordedAtUtc != null)
+              _DoseMetadata(
+                label: isArabic ? 'سُجلت الحالة' : 'Status recorded',
+                value: DateFormat.jm(l10n.localeName).format(
+                  DateTime.fromMillisecondsSinceEpoch(
+                    dose.statusRecordedAtUtc!,
+                    isUtc: true,
+                  ).toLocal(),
+                ),
+              ),
+            if (dose.takenAtUtc != null)
+              _DoseMetadata(
+                label: isArabic ? 'وقت التناول' : 'Taken at',
+                value: DateFormat.jm(l10n.localeName).format(
+                  DateTime.fromMillisecondsSinceEpoch(
+                    dose.takenAtUtc!,
+                    isUtc: true,
+                  ).toLocal(),
+                ),
+              ),
+            if (dose.postponedUntilUtc != null)
+              _DoseMetadata(
+                label: isArabic ? 'التذكير الجديد' : 'New reminder',
+                value: DateFormat.jm(l10n.localeName).format(
+                  DateTime.fromMillisecondsSinceEpoch(
+                    dose.postponedUntilUtc!,
+                    isUtc: true,
+                  ).toLocal(),
+                ),
+              ),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              title: Text(
+                isArabic ? 'سجل تغييرات الحالة' : 'Status history',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              children: [
+                FutureBuilder<List<Map<String, Object?>>>(
+                  future: ref
+                      .read(doseRepositoryProvider)
+                      .eventsForDose(dose.id),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) {
+                      return const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: LinearProgressIndicator(),
+                      );
+                    }
+                    return Column(
+                      children: snapshot.data!
+                          .map((event) {
+                            final recorded =
+                                DateTime.fromMillisecondsSinceEpoch(
+                                  event['recorded_at_utc']! as int,
+                                  isUtc: true,
+                                ).toLocal();
+                            final status = event['new_status']! as String;
+                            final until = event['postponed_until_utc'] as int?;
+                            final label = _statusName(status, isArabic);
+                            return ListTile(
+                              dense: true,
+                              leading: const Icon(
+                                Icons.history_rounded,
+                                size: 18,
+                              ),
+                              title: Text(
+                                '${DateFormat.jm(l10n.localeName).format(recorded)} · $label',
+                              ),
+                              subtitle:
+                                  until == null
+                                      ? null
+                                      : Text(
+                                        '${isArabic ? 'أُجل التذكير إلى' : 'Reminder moved to'} ${DateFormat.jm(l10n.localeName).format(DateTime.fromMillisecondsSinceEpoch(until, isUtc: true).toLocal())}',
+                                      ),
+                            );
+                          })
+                          .toList(growable: false),
+                    );
+                  },
+                ),
+              ],
             ),
             if (due)
               Wrap(
@@ -336,3 +443,34 @@ class _DoseCard extends StatelessWidget {
     );
   }
 }
+
+class _DoseMetadata extends StatelessWidget {
+  const _DoseMetadata({required this.label, required this.value});
+  final String label;
+  final String value;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsetsDirectional.only(top: 4),
+    child: Row(
+      children: [
+        Text('$label: ', style: Theme.of(context).textTheme.bodySmall),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+String _statusName(String value, bool arabic) => switch (value) {
+  'pending' => arabic ? 'بانتظار التأكيد' : 'Pending',
+  'taken' => arabic ? 'تم التناول' : 'Taken',
+  'postponed' => arabic ? 'مؤجلة' : 'Postponed',
+  'skipped' => arabic ? 'تم التخطي' : 'Skipped',
+  'unconfirmed' || 'missed' => arabic ? 'غير مؤكدة' : 'Unconfirmed',
+  _ => value,
+};

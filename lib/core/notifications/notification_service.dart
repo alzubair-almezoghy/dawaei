@@ -53,9 +53,7 @@ class NotificationService {
     timezone_data.initializeTimeZones();
     await _plugin.initialize(
       const InitializationSettings(
-        android: AndroidInitializationSettings(
-          '@drawable/dawaei_notification',
-        ),
+        android: AndroidInitializationSettings('@drawable/dawaei_notification'),
       ),
       onDidReceiveNotificationResponse:
           (response) => _dispatchPayload(response.payload, response.id),
@@ -169,6 +167,7 @@ class NotificationService {
     required String dosageAmount,
     required String dosageUnit,
     required int medicationId,
+    int? doseRecordId,
     required tz.TZDateTime at,
     required bool exact,
     required AppSettings alertSettings,
@@ -235,6 +234,69 @@ class NotificationService {
           exact
               ? AndroidScheduleMode.exactAllowWhileIdle
               : AndroidScheduleMode.inexactAllowWhileIdle,
+      payload: jsonEncode({
+        'medicationId': medicationId,
+        if (doseRecordId != null) 'doseRecordId': doseRecordId,
+      }),
+    );
+  }
+
+  /// Restores an alarm notification after a user cancels the snooze sheet.
+  /// It does not use a full-screen intent because the alarm screen is already visible.
+  Future<void> restoreAlarmNotification({
+    required int id,
+    required int medicationId,
+    required String medicationName,
+    required String dosageAmount,
+    required String dosageUnit,
+    required AppSettings alertSettings,
+  }) async {
+    await initialize();
+    if (!await notificationsEnabled()) return;
+    final policyAccess = await hasNotificationPolicyAccess();
+    final bypassDnd = alertSettings.medicationAlertsDuringDnd && policyAccess;
+    final channelId = _channelId(alertSettings, bypassDnd);
+    await _ensureAlertChannel(alertSettings, bypassDnd);
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        channelId,
+        alertSettings.medicationAlertMode == MedicationAlertMode.alarm
+            ? 'Medication alarms'
+            : 'Medication reminders',
+        channelDescription: 'Medication time reminders.',
+        icon: 'dawaei_notification',
+        largeIcon: const DrawableResourceAndroidBitmap('dawaei_logo_icon'),
+        playSound: true,
+        sound: _sound(alertSettings),
+        audioAttributesUsage:
+            alertSettings.medicationAlertMode == MedicationAlertMode.alarm
+                ? AudioAttributesUsage.alarm
+                : AudioAttributesUsage.notification,
+        channelBypassDnd: bypassDnd,
+        enableVibration: alertSettings.medicationAlertVibration,
+        vibrationPattern: Int64List.fromList([0, 600, 300, 600]),
+        autoCancel: true,
+        fullScreenIntent: false,
+        importance:
+            alertSettings.medicationAlertMode == MedicationAlertMode.alarm
+                ? Importance.max
+                : Importance.high,
+        priority:
+            alertSettings.medicationAlertMode == MedicationAlertMode.alarm
+                ? Priority.max
+                : Priority.high,
+        visibility: NotificationVisibility.private,
+        category:
+            alertSettings.medicationAlertMode == MedicationAlertMode.alarm
+                ? AndroidNotificationCategory.alarm
+                : AndroidNotificationCategory.reminder,
+      ),
+    );
+    await _plugin.show(
+      id,
+      medicationName,
+      '$dosageAmount $dosageUnit',
+      details,
       payload: jsonEncode({'medicationId': medicationId}),
     );
   }

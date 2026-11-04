@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -9,6 +10,7 @@ import '../../../features/medicines/models/medication.dart';
 import '../../../core/notifications/notification_scheduler.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../providers/medications_provider.dart';
+import '../widgets/medication_image_preview.dart';
 
 class MedicationFormScreen extends ConsumerStatefulWidget {
   const MedicationFormScreen({
@@ -47,6 +49,10 @@ class _MedicationFormScreenState extends ConsumerState<MedicationFormScreen> {
   DateTime? _end;
   int? _color;
   bool _saving = false;
+  bool _photoBusy = false;
+  XFile? _pendingPhoto;
+  bool _removeSavedPhoto = false;
+  final ImagePicker _imagePicker = ImagePicker();
   late final bool _allowNoSchedule;
   late List<_ScheduleDraft> _schedules;
 
@@ -150,13 +156,19 @@ class _MedicationFormScreenState extends ConsumerState<MedicationFormScreen> {
                         label: Text(
                           widget.recipientName ?? l10n.measurementSelf,
                         ),
-                        backgroundColor: brightness == Brightness.dark
-                            ? const Color(0xFF123B45)
-                            : Theme.of(context).colorScheme.surfaceContainerHighest,
+                        backgroundColor:
+                            brightness == Brightness.dark
+                                ? const Color(0xFF123B45)
+                                : Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest,
                         side: BorderSide(
-                          color: brightness == Brightness.dark
-                              ? Colors.white.withValues(alpha: .10)
-                              : Theme.of(context).colorScheme.outlineVariant,
+                          color:
+                              brightness == Brightness.dark
+                                  ? Colors.white.withValues(alpha: .10)
+                                  : Theme.of(
+                                    context,
+                                  ).colorScheme.outlineVariant,
                         ),
                       ),
                     ),
@@ -270,6 +282,93 @@ class _MedicationFormScreenState extends ConsumerState<MedicationFormScreen> {
                             decoration: _decoration(context, l10n.customForm),
                           ),
                         ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _section(
+                          context,
+                          l10n.medicationPhotoTitle,
+                          Icons.add_a_photo_outlined,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          l10n.medicationPhotoDescription,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        MedicationImagePreview(
+                          path:
+                              _pendingPhoto?.path ??
+                              (_removeSavedPhoto
+                                  ? null
+                                  : widget.medication?.imagePath),
+                          temporary: _pendingPhoto != null,
+                          height: 164,
+                          placeholder: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.medication_outlined,
+                                  size: 36,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  l10n.chooseMedicationPhoto,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextButton.icon(
+                                onPressed:
+                                    _saving || _photoBusy ? null : _selectPhoto,
+                                icon: Icon(
+                                  _hasPhoto
+                                      ? Icons.refresh_rounded
+                                      : Icons.add_photo_alternate_outlined,
+                                ),
+                                label: Text(
+                                  _hasPhoto
+                                      ? l10n.replaceMedicationPhoto
+                                      : l10n.chooseMedicationPhoto,
+                                ),
+                              ),
+                            ),
+                            if (_hasPhoto)
+                              IconButton(
+                                tooltip: l10n.removeMedicationPhoto,
+                                onPressed:
+                                    _saving || _photoBusy
+                                        ? null
+                                        : () => setState(() {
+                                          _pendingPhoto = null;
+                                          _removeSavedPhoto = true;
+                                        }),
+                                icon: const Icon(Icons.delete_outline_rounded),
+                              ),
+                          ],
+                        ),
+                        if (_photoBusy) const LinearProgressIndicator(),
                       ],
                     ),
                   ),
@@ -415,6 +514,61 @@ class _MedicationFormScreenState extends ConsumerState<MedicationFormScreen> {
     );
   }
 
+  bool get _hasPhoto =>
+      _pendingPhoto != null ||
+      (!_removeSavedPhoto && widget.medication?.imagePath != null);
+
+  Future<void> _selectPhoto() async {
+    final l10n = AppLocalizations.of(context);
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder:
+          (sheetContext) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.photo_camera_outlined),
+                  title: Text(l10n.takeMedicationPhoto),
+                  onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: Text(l10n.choosePhotoFromGallery),
+                  onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+    );
+    if (source == null || !mounted) return;
+    setState(() => _photoBusy = true);
+    try {
+      final image = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 84,
+      );
+      if (image != null && mounted) {
+        setState(() {
+          _pendingPhoto = image;
+          _removeSavedPhoto = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l10n.medicationPhotoError)));
+      }
+    } finally {
+      if (mounted) setState(() => _photoBusy = false);
+    }
+  }
+
   Widget _scheduleCard(BuildContext context, int index, _ScheduleDraft draft) {
     final l10n = AppLocalizations.of(context);
     return Card(
@@ -519,26 +673,46 @@ class _MedicationFormScreenState extends ConsumerState<MedicationFormScreen> {
               ),
             )
             .toList();
-    final medication = Medication(
-      id: widget.medication?.id,
-      name: _name.text.trim(),
-      dosageAmount: _amount.text.trim(),
-      dosageUnit: _unit == 'custom' ? _customUnit.text.trim() : _unit,
-      form:
-          _form.isEmpty
-              ? null
-              : (_form == 'other' ? _customForm.text.trim() : _form),
-      startDate: _start,
-      endDate: _end,
-      notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
-      colorValue: _color,
-      indication: widget.medication?.indication ?? widget.indication,
-      recipientId: widget.medication?.recipientId ?? widget.recipientId,
-      isActive: widget.medication?.isActive ?? true,
-      schedules: schedules,
-    );
+    String? newImagePath;
+    final oldImagePath = widget.medication?.imagePath;
     try {
+      var imagePath = oldImagePath;
+      if (_removeSavedPhoto) imagePath = null;
+      if (_pendingPhoto != null) {
+        newImagePath = await ref
+            .read(medicationImageStorageProvider)
+            .savePickedImage(_pendingPhoto!);
+        imagePath = newImagePath;
+      }
+      final medication = Medication(
+        id: widget.medication?.id,
+        name: _name.text.trim(),
+        dosageAmount: _amount.text.trim(),
+        dosageUnit: _unit == 'custom' ? _customUnit.text.trim() : _unit,
+        form:
+            _form.isEmpty
+                ? null
+                : (_form == 'other' ? _customForm.text.trim() : _form),
+        startDate: _start,
+        endDate: _end,
+        notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
+        indication: widget.medication?.indication ?? widget.indication,
+        imagePath: imagePath,
+        colorValue: _color,
+        recipientId: widget.medication?.recipientId ?? widget.recipientId,
+        isActive: widget.medication?.isActive ?? true,
+        schedules: schedules,
+      );
       await ref.read(medicationsProvider.notifier).save(medication);
+      if (oldImagePath != imagePath) {
+        try {
+          await ref
+              .read(medicationImageStorageProvider)
+              .deleteIfUnreferenced(oldImagePath);
+        } catch (_) {
+          // An unused private image can be cleaned up later; don't undo a save.
+        }
+      }
       final now = DateTime.now();
       ref.invalidate(
         dosesForDateProvider(DateTime(now.year, now.month, now.day)),
@@ -591,16 +765,36 @@ class _MedicationFormScreenState extends ConsumerState<MedicationFormScreen> {
         context.pop();
       }
     } on MedicationValidationException catch (e) {
+      if (newImagePath != null) {
+        try {
+          await ref
+              .read(medicationImageStorageProvider)
+              .deleteIfUnreferenced(newImagePath);
+        } catch (_) {}
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_validationMessage(l10n, e.messageKey))),
         );
       }
     } catch (_) {
+      if (newImagePath != null) {
+        try {
+          await ref
+              .read(medicationImageStorageProvider)
+              .deleteIfUnreferenced(newImagePath);
+        } catch (_) {}
+      }
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(l10n.medicationLoadError)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _pendingPhoto != null || _removeSavedPhoto
+                  ? l10n.medicationPhotoError
+                  : l10n.medicationLoadError,
+            ),
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => _saving = false);

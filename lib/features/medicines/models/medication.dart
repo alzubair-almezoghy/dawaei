@@ -52,6 +52,7 @@ class Medication {
     this.endDate,
     this.notes,
     this.indication,
+    this.imagePath,
     this.colorValue,
     this.recipientId,
     this.timezoneId = 'system',
@@ -73,6 +74,9 @@ class Medication {
   final DateTime? endDate;
   final String? notes;
   final String? indication;
+
+  /// Relative path inside the application's private medication image folder.
+  final String? imagePath;
   final int? colorValue;
 
   /// Null associates this medication with the current user's own treatment.
@@ -101,6 +105,8 @@ class Medication {
     bool clearNotes = false,
     String? indication,
     bool clearIndication = false,
+    String? imagePath,
+    bool clearImagePath = false,
     int? colorValue,
     int? recipientId,
     bool clearRecipient = false,
@@ -118,6 +124,7 @@ class Medication {
     endDate: clearEndDate ? null : endDate ?? this.endDate,
     notes: clearNotes ? null : notes ?? this.notes,
     indication: clearIndication ? null : indication ?? this.indication,
+    imagePath: clearImagePath ? null : imagePath ?? this.imagePath,
     colorValue: colorValue ?? this.colorValue,
     recipientId: clearRecipient ? null : recipientId ?? this.recipientId,
     timezoneId: timezoneId,

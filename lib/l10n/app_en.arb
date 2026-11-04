@@ -263,5 +263,13 @@
   "alarmConfirmationNote": "Stopping the alarm does not mark the dose as taken. Confirm it in dose history after taking it.",
   "alarmActionError": "Could not stop the alarm. Try again or dismiss its notification.",
   "alarmPermission": "Allow alarm screen",
-  "alarmPermissionBody": "Allow the alarm screen over the lock screen. Sound depends on alarm volume and device permissions."
+  "alarmPermissionBody": "Allow the alarm screen over the lock screen. Sound depends on alarm volume and device permissions.",
+  "medicationPhotoTitle": "Medication photo (optional)",
+  "medicationPhotoDescription": "The photo will appear when this medication reminder rings.",
+  "chooseMedicationPhoto": "Add a photo",
+  "replaceMedicationPhoto": "Replace photo",
+  "removeMedicationPhoto": "Remove photo",
+  "takeMedicationPhoto": "Take a photo",
+  "choosePhotoFromGallery": "Choose from gallery",
+  "medicationPhotoError": "Could not select or save the photo. Your medication details were not changed."
 }

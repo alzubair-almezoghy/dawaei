@@ -780,4 +780,28 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get alarmPermissionBody => 'اسمح لشاشة المنبه بالظهور فوق شاشة القفل. يعتمد الصوت على مستوى صوت المنبه وأذونات الجهاز.';
+
+  @override
+  String get medicationPhotoTitle => 'صورة الدواء (اختياري)';
+
+  @override
+  String get medicationPhotoDescription => 'ستظهر الصورة عند رنين تذكير هذا الدواء.';
+
+  @override
+  String get chooseMedicationPhoto => 'إضافة صورة';
+
+  @override
+  String get replaceMedicationPhoto => 'استبدال الصورة';
+
+  @override
+  String get removeMedicationPhoto => 'إزالة الصورة';
+
+  @override
+  String get takeMedicationPhoto => 'التقاط صورة';
+
+  @override
+  String get choosePhotoFromGallery => 'اختيار من المعرض';
+
+  @override
+  String get medicationPhotoError => 'تعذر اختيار الصورة أو حفظها. لم يتم تغيير بيانات الدواء.';
 }

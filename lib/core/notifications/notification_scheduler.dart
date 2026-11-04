@@ -9,6 +9,7 @@ import '../../features/settings/data/settings_store.dart';
 import '../../features/settings/models/app_settings.dart';
 import '../../features/settings/providers/settings_provider.dart';
 import 'notification_service.dart';
+import 'notification_ids.dart';
 
 const notificationHorizonDays = 7;
 const maxScheduledMedicationNotifications = 200;
@@ -248,6 +249,104 @@ class NotificationScheduler {
           whereArgs: [id],
         );
       }
+    }
+    await _reconcilePostponed(db, alertSettings, exact);
+  }
+
+  Future<void> schedulePostponedDose(int doseId, {DateTime? untilUtc}) async {
+    await _notifications.initialize();
+    final db = await _database.database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT id, medication_id, medication_name, dosage_amount, dosage_unit,
+        timezone_id, postponed_until_utc
+      FROM dose_records WHERE id = ?
+    ''',
+      [doseId],
+    );
+    if (rows.isEmpty) throw StateError('Postponed dose not found.');
+    final row = rows.single;
+    final until =
+        untilUtc?.toUtc().millisecondsSinceEpoch ??
+        (row['postponed_until_utc'] as int?);
+    if (untilUtc == null && row['status'] != 'postponed') {
+      throw StateError('Postponed dose not found.');
+    }
+    if (until == null || until <= _nowUtc()) {
+      throw StateError('Postponed time has passed.');
+    }
+    final settings = await _loadAlertSettings();
+    await _schedulePostponedRow(
+      {...row, 'postponed_until_utc': until},
+      settings,
+      await _notifications.canScheduleExact(),
+    );
+  }
+
+  Future<void> _reconcilePostponed(
+    Database db,
+    AppSettings settings,
+    bool exact,
+  ) async {
+    final now = _nowUtc();
+    final rows = await db.rawQuery(
+      '''
+      SELECT id, medication_id, medication_name, dosage_amount, dosage_unit,
+        timezone_id, postponed_until_utc
+      FROM dose_records WHERE status = 'postponed' AND postponed_until_utc > ?
+    ''',
+      [now],
+    );
+    if (rows.isEmpty) return;
+    final wantedIds =
+        rows
+            .map((row) => postponedNotificationIdBase + (row['id']! as int))
+            .toSet();
+    final pending = await _notifications.pendingRequests();
+    for (final request in pending) {
+      if (request.id >= postponedNotificationIdBase &&
+          request.id < postponedNotificationIdBase + 100000000 &&
+          !wantedIds.contains(request.id)) {
+        await _notifications.cancel(request.id);
+      }
+    }
+    for (final row in rows) {
+      await _schedulePostponedRow(row, settings, exact);
+    }
+  }
+
+  Future<void> _schedulePostponedRow(
+    Map<String, Object?> row,
+    AppSettings settings,
+    bool exact,
+  ) async {
+    final id = row['id']! as int;
+    if (id >= 100000000) {
+      throw StateError('Dose ID exceeds notification ID range.');
+    }
+    final zoneId = row['timezone_id']! as String;
+    final at = tz.TZDateTime.fromMillisecondsSinceEpoch(
+      tz.getLocation(zoneId),
+      row['postponed_until_utc']! as int,
+    );
+    await _notifications.schedule(
+      id: postponedNotificationIdBase + id,
+      medicationName: row['medication_name']! as String,
+      dosageAmount: row['dosage_amount']! as String,
+      dosageUnit: row['dosage_unit']! as String,
+      medicationId: row['medication_id']! as int,
+      doseRecordId: id,
+      at: at,
+      exact: exact,
+      alertSettings: settings,
+    );
+  }
+
+  Future<AppSettings> _loadAlertSettings() async {
+    try {
+      return await _settingsStore?.load() ?? const AppSettings();
+    } catch (_) {
+      return const AppSettings();
     }
   }
 
